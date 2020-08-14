@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-hs
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: redis    
+    port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  serviceName: redis-hs
+  replicas: 4
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: OrderedReady
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      serviceAccountName:  redis
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: redis-container
+        imagePullPolicy: IfNotPresent
+        image: fwt/redis
+        command:
+          - sh
+          - -c
+          - 'HOST=$(hostname);cd /data/redis && mkdir -p $HOST && cd $HOST && gen_conf && redis-server /etc/redis/redis.conf'
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: data-dir
+          mountPath: /data/redis
+        - name: config
+          mountPath: /etc/redis
+      volumes:
+      - name: config
+        emptyDir: {}
+      - name: data-dir
+        persistentVolumeClaim:
+          claimName: data-dir
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-dir
+  labels:
+    name: redis-pvc
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: 1Gi    

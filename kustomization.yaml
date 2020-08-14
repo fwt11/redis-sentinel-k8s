@@ -1,0 +1,5 @@
+resources:
+- rbac.yaml
+- redis.yaml
+- sentinel.yaml
+- nfs-volume.yaml

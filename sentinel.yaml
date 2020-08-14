@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-hs
+  labels:
+    app: sentinel
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: sentinel    
+    port: 26379
+    targetPort: 26379
+  selector:
+    app: sentinel
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sentinel
+spec:
+  selector:
+    matchLabels:
+      app: sentinel
+  serviceName: sentinel-hs
+  replicas: 2
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: OrderedReady
+  template:
+    metadata:
+      labels:
+        app: sentinel
+    spec:
+      serviceAccountName:  redis
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: redis-container
+        imagePullPolicy: IfNotPresent
+        image: fwt/redis
+        command: ['sh', '-c', "gen_conf && redis-sentinel /etc/redis/sentinel.conf"]
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+        - containerPort: 26379
+          name: redis
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis
+        - name: host-time
+          mountPath: "/etc/localtime"
+      volumes:
+      - name: config
+        emptyDir: {}
+      - name: host-time
+        hostPath:
+          path: /etc/localtime
