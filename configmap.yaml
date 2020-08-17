@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gen-conf
+data:
+  genconf: |
+            #!/usr/bin/env python3
+            import time
+            import os
+            from kubernetes import client, config
+            
+            config.load_incluster_config()
+            #config.host = "https://kubernetes.default.svc:443"
+            v1 = client.CoreV1Api()
+            appsV1 = client.AppsV1Api()
+            
+            pod_name = os.getenv("HOSTNAME")
+            if "sentinel" in pod_name:
+                while True:
+                    redis_stateful_set = appsV1.read_namespaced_stateful_set(name = "redis", namespace = "default")
+                    if redis_stateful_set.status.ready_replicas == redis_stateful_set.spec.replicas:
+                        break
+                    time.sleep(1)
+                f = open("/etc/redis/sentinel.conf", "w")
+                f.write("port 26379\n")
+                for item in v1.list_namespaced_pod(namespace="default", 
+                                                label_selector="app=redis").items:
+                    name = item.metadata.name
+                    num = int(name.split("-")[-1])
+                    if num % 2 == 0:
+                        #sentinel only monitor master
+                        #monitor的不能是ip,否则pod销毁重建会导致ip变化，进而导致不能监控
+                        fullname = name + '.redis-hs.default.svc.cluster.local'
+                        f.write("sentinel monitor {} {} 6379 2\n".format(name, fullname))
+                f.close()
+            else:
+                f = open("/etc/redis/redis.conf", "w")
+                hostnum = int(pod_name.split("-")[-1])
+                pod_ip = os.getenv("POD_IP")
+                f.write("port 6379\n")
+                if hostnum % 2:
+                    #this is a slave
+                    for item in v1.list_namespaced_pod(namespace="default", 
+                                                    label_selector="app=redis").items:
+                        name = item.metadata.name
+                        if int(name.split("-")[-1]) == hostnum - 1:
+                            #不能用ip
+                            #f.write("slaveof {} 6379\n".format(item.status.pod_ip))
+                            f.write("slaveof {}.redis-hs.default.svc.cluster.local 6379\n".format(name))
+                            break
+            
+                f.write("protected-mode no\n")
+                f.write("appendonly yes\n")
+                f.write("bind {}\n".format(pod_ip))
+                f.close()
+  

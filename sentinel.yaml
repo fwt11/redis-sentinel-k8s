@@ -53,9 +53,16 @@ spec:
           mountPath: /etc/redis
         - name: host-time
           mountPath: "/etc/localtime"
+        - name: gen-conf
+          mountPath: /usr/local/bin/genconf
+          subPath: genconf
       volumes:
       - name: config
         emptyDir: {}
       - name: host-time
         hostPath:
           path: /etc/localtime
+      - name: gen-conf
+        configMap: 
+          name: gen-conf
+          defaultMode: 0755

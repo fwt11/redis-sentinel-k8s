@@ -1,4 +1,5 @@
 resources:
+- configmap.yaml
 - rbac.yaml
 - redis.yaml
 - sentinel.yaml
