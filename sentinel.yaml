@@ -39,7 +39,7 @@ spec:
       - name: redis-container
         imagePullPolicy: IfNotPresent
         image: fwt/redis
-        command: ['sh', '-c', "gen_conf && redis-sentinel /etc/redis/sentinel.conf"]
+        command: ['sh', '-c', "genconf && redis-sentinel /etc/redis/sentinel.conf"]
         env:
         - name: POD_IP
           valueFrom:

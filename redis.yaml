@@ -45,7 +45,7 @@ spec:
           - |
             HOST=$(hostname) 
             mkdir -p /data/redis/$HOST && cd /data/redis/$HOST 
-            gen_conf 
+            genconf 
             if echo $HOST|grep "sentinel" 
             then 
                redis-sentinel /etc/redis/sentinel.conf 
