@@ -10,7 +10,6 @@ data:
     import subprocess
     from kubernetes import client, config, watch
 
-    #因为redis的库没有这个功能，所以用pexpect和redis-cli来弄
     def monitor_new_master(name, ip):
         cli = "redis-cli -h localhost -p 26379 "
         monitor_cmd = cli + "sentinel monitor {} {} 6379 2".format(name, ip)
