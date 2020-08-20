@@ -4,3 +4,4 @@ resources:
 - redis.yaml
 - sentinel.yaml
 - nfs-volume.yaml
+namespace: redis

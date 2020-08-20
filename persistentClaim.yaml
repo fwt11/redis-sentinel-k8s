@@ -45,12 +45,13 @@ spec:
           - |
             HOST=$(hostname) 
             mkdir -p /data/redis/$HOST && cd /data/redis/$HOST 
-            genconf& 
-            until [ -f /etc/redis/redis.conf ] 
-            do 
-                sleep 1
-            done
-            redis-server /etc/redis/redis.conf 
+            genconf 
+            if echo $HOST|grep "sentinel" 
+            then 
+               redis-sentinel /etc/redis/sentinel.conf 
+            else 
+               redis-server /etc/redis/redis.conf 
+            fi
         env:
         - name: POD_IP
           valueFrom:

@@ -39,7 +39,16 @@ spec:
       - name: redis-container
         imagePullPolicy: IfNotPresent
         image: fwt/redis
-        command: ['sh', '-c', "genconf && redis-sentinel /etc/redis/sentinel.conf"]
+        command: 
+        - sh
+        - -c
+        - |
+            genconf&
+            until [ -f /etc/redis/sentinel.conf ] 
+            do 
+                sleep 1
+            done
+            redis-sentinel /etc/redis/sentinel.conf
         env:
         - name: POD_IP
           valueFrom:
@@ -55,7 +64,7 @@ spec:
           mountPath: "/etc/localtime"
         - name: gen-conf
           mountPath: /usr/local/bin/genconf
-          subPath: genconf
+          subPath: genconf-sentinel
       volumes:
       - name: config
         emptyDir: {}
