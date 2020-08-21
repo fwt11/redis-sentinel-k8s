@@ -64,7 +64,14 @@ data:
     import os
     import subprocess
     from kubernetes import client, config, watch
+    from redis.sentinel import Sentinel
     pod_is_slave = False
+
+
+    def monitor_new_master(name, ip):
+        cli = "redis-cli -h sentinel-svc-nodeip.redis.svc.cluster.local -p 26379 "
+        monitor_cmd = cli + "sentinel monitor {} {} 6379 2".format(name, ip)
+        result = subprocess.run(monitor_cmd.split(" "))
     
     config.load_incluster_config()
     v1 = client.CoreV1Api()
@@ -72,38 +79,34 @@ data:
     pod_name = os.getenv("HOSTNAME")
     f = open("/etc/redis/redis.conf", "w")
     hostnum = int(pod_name.split("-")[-1])
-    pod_ip = os.getenv("POD_IP")
     f.write("port 6379\n")
-    monitored_ip = ""
-    if hostnum % 2:
-        #this is a slave
-        pod_is_slave = True
-        for item in v1.list_namespaced_pod(namespace="redis", 
-                                        label_selector="app=redis").items:
-            name = item.metadata.name
-            if int(name.split("-")[-1]) == hostnum - 1:
-                f.write("slaveof {} 6379\n".format(item.status.pod_ip))
-                #f.write("slaveof {}.redis-hs.redis.svc.cluster.local 6379\n".format(name))
-                monitored_ip = (name, item.status.pod_ip)
-                print(monitored_ip)
-                break
+
+    statefulsetname = "-".join(pod_name.split("-")[:-1])
+    statefulset = appsV1.read_namespaced_stateful_set(namespace="redis", name="redis")
+    master_pod = v1.read_namespaced_pod(namespace="redis", name=statefulsetname+"-0")
+    sentinel = Sentinel([("sentinel-svc-nodeip.redis.svc.cluster.local", 26379)], socket_timeout=1)
+    try:
+        master_ip = sentinel.discover_master(statefulsetname)[0]
+    except:
+        master_ip = ""
+    
+    if master_ip:
+        f.write("slaveof {} 6379\n".format(master_ip))
+    else:
+        if not pod_name.endswith("-0"):      
+            master_ip = master_pod.status.pod_ip
+            f.write("slaveof {} 6379\n".format(master_ip))
 
     f.write("protected-mode no\n")
     f.write("appendonly yes\n")
     f.write("bind 0.0.0.0\n")
     #f.write("bind {}\n".format(pod_ip))
     f.close()
-    if pod_is_slave:
-        w = watch.Watch()
-        for event in w.stream(v1.list_namespaced_pod, "redis"):
-            obj = event["object"]
-            pod_name = obj.metadata.name 
-            pod_ip = obj.status.pod_ip
-            if pod_name == monitored_ip[0] and \
-                pod_ip != monitored_ip[1] and pod_ip is not None:
-                print("ip changed, try to monitor new pod...")
-                cmd = "redis-cli config set slaveof {} 6379".format(pod_ip).split(" ")
-                subprocess.run(cmd)
-                monitored_ip = (pod_name, pod_ip)
-                
+    if pod_name.endswith("-0"):
+        while True:
+            redis_stateful_set = appsV1.read_namespaced_stateful_set(name = "redis", namespace = "redis")
+            if redis_stateful_set.status.ready_replicas == redis_stateful_set.spec.replicas:
+                break
+            time.sleep(1)
+        monitor_new_master(statefulsetname, master_pod.status.pod_ip)
         
