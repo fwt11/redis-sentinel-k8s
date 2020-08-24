@@ -45,7 +45,7 @@ spec:
           - |
             HOST=$(hostname) 
             mkdir -p /data/redis/$HOST && cd /data/redis/$HOST 
-            genconf& 
+            genconf
             until [ -f /etc/redis/redis.conf ] 
             do 
                 sleep 1

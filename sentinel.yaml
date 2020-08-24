@@ -39,7 +39,7 @@ spec:
     matchLabels:
       app: sentinel
   serviceName: sentinel-hs
-  replicas: 2
+  replicas: 3
   updateStrategy:
     type: RollingUpdate
   podManagementPolicy: OrderedReady
@@ -59,7 +59,7 @@ spec:
         - sh
         - -c
         - |
-            genconf&
+            genconf
             until [ -f /etc/redis/sentinel.conf ] 
             do 
                 sleep 1

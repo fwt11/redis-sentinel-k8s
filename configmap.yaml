@@ -5,108 +5,127 @@ metadata:
 data:
   genconf-sentinel: |
     #!/usr/bin/env python3
-    import time
-    import os
-    import subprocess
-    from kubernetes import client, config, watch
-
-    def monitor_new_master(name, ip):
-        cli = "redis-cli -h localhost -p 26379 "
-        monitor_cmd = cli + "sentinel monitor {} {} 6379 2".format(name, ip)
-        remove_cmd = cli + "sentinel remove {}".format(name)
-        flush_config = cli + "sentinel flushconfig"
-        
-        #change_ip_cmd = "redis-cli -h localhost -p 26379 sentinel set {} ip {}".format(name, ip)
-        subprocess.run(remove_cmd.split(" "))
-        result = subprocess.run(monitor_cmd.split(" "))
-        subprocess.run(flush_config.split(" ")) 
-        print(result.stdout)
-    
-    config.load_incluster_config()
-    v1 = client.CoreV1Api()
-    appsV1 = client.AppsV1Api()
-    pod_name = os.getenv("HOSTNAME")
-    while True:
-        redis_stateful_set = appsV1.read_namespaced_stateful_set(name = "redis", namespace = "redis")
-        if redis_stateful_set.status.ready_replicas == redis_stateful_set.spec.replicas:
-            break
-        time.sleep(1)
     f = open("/etc/redis/sentinel.conf", "w")
     f.write("port 26379\n")
-    monitored_hosts_ip = {}
-    for item in v1.list_namespaced_pod(namespace="redis", 
-                                    label_selector="app=redis").items:
-        name = item.metadata.name
-        num = int(name.split("-")[-1])
-        if num % 2 == 0:
-            #sentinel only monitor master
-            fullname = name + '.redis-hs.redis.svc.cluster.local'
-            f.write("sentinel monitor {} {} 6379 2\n".format(name, item.status.pod_ip))
-            monitored_hosts_ip[name] = item.status.pod_ip
-            f.write("sentinel down-after-milliseconds {} 2000\n".format(name))
     f.close()
-    print("monitored_pods: ", monitored_hosts_ip)
-    w = watch.Watch()
-    for event in w.stream(v1.list_namespaced_pod, "redis"):
-        print("Event: %s %s" % (event['type'], event['object'].metadata.name))
-        obj = event["object"]
-        pod_name = obj.metadata.name 
-        pod_ip = obj.status.pod_ip
-        if pod_name in monitored_hosts_ip.keys() and \
-            pod_ip != monitored_hosts_ip[pod_name] and pod_ip is not None:
-            print("ip changed, try to monitor new pod...")
-            monitor_new_master(pod_name, pod_ip)
-            monitored_hosts_ip[pod_name] = pod_ip
-
   genconf-redis: |
     #!/usr/bin/env python3
     import time
     import os
     import subprocess
+    import threading
     from kubernetes import client, config, watch
-    from redis.sentinel import Sentinel
+    from redis.sentinel import Redis, Sentinel
     pod_is_slave = False
 
-
-    def monitor_new_master(name, ip):
-        cli = "redis-cli -h sentinel-svc-nodeip.redis.svc.cluster.local -p 26379 "
-        monitor_cmd = cli + "sentinel monitor {} {} 6379 2".format(name, ip)
-        result = subprocess.run(monitor_cmd.split(" "))
-    
     config.load_incluster_config()
     v1 = client.CoreV1Api()
     appsV1 = client.AppsV1Api()
+
+    def monitor_new_master(name, ip):
+        "waiting for the sentinel to start"
+        #如果是第一次启动，启动前要确保sentinel都启动完成
+        while True:
+            sentinels = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis")
+            if sentinels.status.ready_replicas == sentinels.spec.replicas:
+                break
+            time.sleep(1)
+        #保证redis也都启动完成，其实没必要？
+        while True:
+            redises = appsV1.read_namespaced_stateful_set(name = name, namespace = "redis")
+            if redises.status.ready_replicas == redises.spec.replicas:
+                break
+            time.sleep(1)
+        #需要让每一个sentinel都监控
+        sentinels = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis")
+        for i in range(sentinels.spec.replicas):
+            cli = "redis-cli -h sentinel-{}.sentinel-hs.redis.svc.cluster.local -p 26379 ".format(i)
+            
+            cmd_list = ["sentinel monitor {} {} 6379 2".format(name, ip),
+                        "sentinel set {} down-after-milliseconds 1000".format(name),
+                        "sentinel flushconfig"
+                    ]
+            for cmd in cmd_list:
+                subprocess.run((cli + cmd).split(" "))
+    
+    def sentinel_reset_master(master):
+        sentinels = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis")
+        for i in range(sentinels.spec.replicas):
+            cli = "redis-cli -h sentinel-{}.sentinel-hs.redis.svc.cluster.local -p 26379 ".format(i)
+            subprocess.run((cli + "sentinel reset {}".format(master)).split(" "))
+
+    def try_ping(c, t):
+        n = t
+        while n > 0:
+            try:
+                c.ping()
+            except:
+                time.sleep(1)
+                n -= 1
+                print("retring ping the redis server", n)
+                continue
+            break    
+
     pod_name = os.getenv("HOSTNAME")
+    pod_ip = os.getenv("POD_IP")
     f = open("/etc/redis/redis.conf", "w")
     hostnum = int(pod_name.split("-")[-1])
     f.write("port 6379\n")
 
     statefulsetname = "-".join(pod_name.split("-")[:-1])
-    statefulset = appsV1.read_namespaced_stateful_set(namespace="redis", name="redis")
-    master_pod = v1.read_namespaced_pod(namespace="redis", name=statefulsetname+"-0")
-    sentinel = Sentinel([("sentinel-svc-nodeip.redis.svc.cluster.local", 26379)], socket_timeout=1)
-    try:
-        master_ip = sentinel.discover_master(statefulsetname)[0]
-    except:
-        master_ip = ""
+    first_pod = v1.read_namespaced_pod(namespace="redis", name=statefulsetname+"-0")
+    print("first pod ip: ", first_pod.status.pod_ip)
+
+
+    redis_servers = []
+    #因为第一次启动时以第0个pod作为master，因此后面的启动一定不能进入那里，一定要从这里得到master
+    #但是如果直接获取，时机不对的话，（比如master刚刚挂掉，或者还没有选出master），则不能得到正确的master
+    #所以，需要一直等
+    sentinels = []
+    pods_sentinel = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis")
+    for i in range(pods_sentinel.spec.replicas):
+        sentinels.append(("sentinel-{}.sentinel-hs.redis.svc.cluster.local".format(i), 26379))
     
-    if master_ip:
+    for s in sentinels:
+        try:
+            sc = Redis(*s, socket_timeout=5)
+            masters = sc.sentinel_masters()
+        except Exception as e:
+            print("error get masters from {}. ".format(s), e)
+            continue
+        break
+
+    sentinel = Sentinel(sentinels, socket_timeout=1)
+    if masters:
+        print("masters monitored: ", masters) 
+        while True:
+            try:
+                current_master = sentinel.discover_master(statefulsetname)
+                print("current master: ", current_master) 
+                master_ip = current_master[0]
+            except Exception as e:
+                print("discover master error: ", e)
+                time.sleep(1)
+                print("waiting for master, retry {} times".format(60 - n))
+                continue
+            break
+        sentinel_reset_master(statefulsetname)
         f.write("slaveof {} 6379\n".format(master_ip))
-    else:
+    else: 
+        print("no master monitored now")
+        #第一次启动时，都作为0号pod的replica
         if not pod_name.endswith("-0"):      
-            master_ip = master_pod.status.pod_ip
+            master_ip = first_pod.status.pod_ip
+            r = Redis(master_ip, 6379)
+            try_ping(r, 20)
             f.write("slaveof {} 6379\n".format(master_ip))
+        else:
+            thread = threading.Thread(target=monitor_new_master, args=(statefulsetname, pod_ip))
+            thread.start()
 
     f.write("protected-mode no\n")
     f.write("appendonly yes\n")
     f.write("bind 0.0.0.0\n")
-    #f.write("bind {}\n".format(pod_ip))
     f.close()
-    if pod_name.endswith("-0"):
-        while True:
-            redis_stateful_set = appsV1.read_namespaced_stateful_set(name = "redis", namespace = "redis")
-            if redis_stateful_set.status.ready_replicas == redis_stateful_set.spec.replicas:
-                break
-            time.sleep(1)
-        monitor_new_master(statefulsetname, master_pod.status.pod_ip)
+
         
