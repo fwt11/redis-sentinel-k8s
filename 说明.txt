@@ -1,8 +1,0 @@
-目前pod挂了以后，会切换到slave，等master恢复后又切换回去。这样有个问题，因为slave不能在线设置（CONFIG SET SLAVEOF这个命令不存在），他就不知道master的地址，虽然也可以先停掉这个slave，再重新配置，但感觉不是很好，所以，不采用这种方法。
-可以这样考虑，先考虑一个master的情况。
-当redis的pod启动时，他先查询sentinel，看看是否有相同的statefulset中的pod被监控，如果有，pod把自己作为该master的slave(这一步是为了保证后面pod重启时，他的工作正常)，如果没有，则将自己作为该statefuslet中编号最小的pod的slave。
-当sentinel启动时，他可以选择statefulset中编号最小的pod作为master，他也应该先查询其他sentinel，看看哪个pod现在是master，并监控之。如果查询不到，则把statefulset中编号最小的作为master
-多个master的情况可一对每个master和slave的集合建一个statefulset，这样和上面所述一样了。
-
-
- 
