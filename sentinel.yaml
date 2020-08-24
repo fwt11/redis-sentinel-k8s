@@ -59,7 +59,7 @@ spec:
         - sh
         - -c
         - |
-            genconf
+            genconf&
             until [ -f /etc/redis/sentinel.conf ] 
             do 
                 sleep 1

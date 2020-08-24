@@ -5,9 +5,63 @@ metadata:
 data:
   genconf-sentinel: |
     #!/usr/bin/env python3
+    import time
+    import os
+    import subprocess
+    import threading
+    from kubernetes import client, config, watch
+    from redis.sentinel import Redis, Sentinel
+
     f = open("/etc/redis/sentinel.conf", "w")
     f.write("port 26379\n")
     f.close()
+
+    def monitor_new_master(name, ip):
+        "waiting for the sentinel to start"
+        cli = "redis-cli -p 26379 "
+        cmd_list = ["sentinel monitor {} {} 6379 2".format(name, ip),
+                    "sentinel set {} down-after-milliseconds 1000".format(name),
+                    "sentinel flushconfig"
+                ]
+        for cmd in cmd_list:
+            subprocess.run((cli + cmd).split(" "))
+
+    config.load_incluster_config()
+    v1 = client.CoreV1Api()
+    appsV1 = client.AppsV1Api()
+    sentinels = []
+    pods_sentinel = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis")
+    for i in range(pods_sentinel.spec.replicas):
+        sentinels.append(("sentinel-{}.sentinel-hs.redis.svc.cluster.local".format(i), 26379))
+    
+    print(sentinels)
+    
+    masters = {}
+    for s in sentinels:
+        try:
+            sc = Redis(*s, socket_timeout=5)
+            masters = sc.sentinel_masters()
+            print("got master:", masters)
+        except Exception as e:
+            print("error get masters from {}. ".format(s), e)
+            continue
+        break
+
+    if masters:
+        for master in masters.keys():
+            name = masters[master]["name"]
+            ip = masters[master]["ip"]
+            down_after_milliseconds = masters[master]["down-after-milliseconds"]
+            r = Redis("localhost", 26379)
+            while True:
+                try:
+                    r.ping()
+                except:
+                    continue
+                break
+            monitor_new_master(name, ip)
+
+
   genconf-redis: |
     #!/usr/bin/env python3
     import time
@@ -86,6 +140,7 @@ data:
     for i in range(pods_sentinel.spec.replicas):
         sentinels.append(("sentinel-{}.sentinel-hs.redis.svc.cluster.local".format(i), 26379))
     
+    masters = {}
     for s in sentinels:
         try:
             sc = Redis(*s, socket_timeout=5)
