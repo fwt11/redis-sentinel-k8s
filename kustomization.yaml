@@ -5,4 +5,5 @@ resources:
 - redis.yaml
 - sentinel.yaml
 - nfs-volume.yaml
-namespace: redis
+- redis-test.yaml #试验
+namespace: redis-sentinel
