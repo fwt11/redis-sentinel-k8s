@@ -39,7 +39,7 @@ spec:
       containers:
       - name: redis-container
         imagePullPolicy: IfNotPresent
-        image: fwt/redis
+        image: fwt11/redis-k8s
         command:
           - sh
           - -c
