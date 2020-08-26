@@ -4,6 +4,7 @@ resources:
 - rbac.yaml
 - redis.yaml
 - sentinel.yaml
+- persistenClaim.yaml
 - nfs-volume.yaml
 - redis-test.yaml #试验
 namespace: redis-sentinel

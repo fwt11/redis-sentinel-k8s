@@ -32,7 +32,7 @@ data:
     sentinels = []
     pods_sentinel = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis-sentinel")
     for i in range(pods_sentinel.spec.replicas):
-        sentinels.append(("sentinel-{}.sentinel-hs.redis.svc.cluster.local".format(i), 26379))
+        sentinels.append(("sentinel-{}.sentinel-hs.redis-sentinel.svc.cluster.local".format(i), 26379))
     
     print(sentinels)
     
@@ -93,7 +93,7 @@ data:
         #需要让每一个sentinel都监控
         sentinels = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis-sentinel")
         for i in range(sentinels.spec.replicas):
-            cli = "redis-cli -h sentinel-{}.sentinel-hs.redis.svc.cluster.local -p 26379 ".format(i)
+            cli = "redis-cli -h sentinel-{}.sentinel-hs.redis-sentinel.svc.cluster.local -p 26379 ".format(i)
             
             cmd_list = ["sentinel monitor {} {} 6379 2".format(name, ip),
                         "sentinel set {} down-after-milliseconds 1000".format(name),
@@ -105,7 +105,7 @@ data:
     def sentinel_reset_master(master):
         sentinels = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis-sentinel")
         for i in range(sentinels.spec.replicas):
-            cli = "redis-cli -h sentinel-{}.sentinel-hs.redis.svc.cluster.local -p 26379 ".format(i)
+            cli = "redis-cli -h sentinel-{}.sentinel-hs.redis-sentinel.svc.cluster.local -p 26379 ".format(i)
             subprocess.run((cli + "sentinel reset {}".format(master)).split(" "))
 
     def try_ping(c, t):
@@ -138,7 +138,7 @@ data:
     sentinels = []
     pods_sentinel = appsV1.read_namespaced_stateful_set(name = "sentinel", namespace = "redis-sentinel")
     for i in range(pods_sentinel.spec.replicas):
-        sentinels.append(("sentinel-{}.sentinel-hs.redis.svc.cluster.local".format(i), 26379))
+        sentinels.append(("sentinel-{}.sentinel-hs.redis-sentinel.svc.cluster.local".format(i), 26379))
     
     masters = {}
     for s in sentinels:
